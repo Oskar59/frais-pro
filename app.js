@@ -654,7 +654,7 @@ $('btn-generate-pdf').addEventListener('click', async () => {
   }
 
   const btn = $('btn-generate-pdf');
-  setButtonLoading(btn, true, '⬇ Générer le PDF');
+  setButtonLoading(btn, true, '⏳ Chargement des justificatifs…');
 
   try {
     const { data, error } = await db
@@ -673,7 +673,27 @@ $('btn-generate-pdf').addEventListener('click', async () => {
       return;
     }
 
-    generatePDF(data, debut, fin);
+    // Fetch des images en base64 pour les justificatifs
+    const imagesMap = {};
+    const entriesWithJustif = data.filter(e => e.justificatif_url);
+    await Promise.all(entriesWithJustif.map(async entry => {
+      try {
+        const resp = await fetch(entry.justificatif_url);
+        const blob = await resp.blob();
+        const format = blob.type.includes('png') ? 'PNG' : 'JPEG';
+        const dataUrl = await new Promise((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result);
+          reader.onerror = rej;
+          reader.readAsDataURL(blob);
+        });
+        imagesMap[entry.id] = { dataUrl, format };
+      } catch (_) {
+        // Image non accessible, on continue sans elle
+      }
+    }));
+
+    generatePDF(data, debut, fin, imagesMap);
     closeExportModal();
   } catch (err) {
     $('export-error').textContent = err.message || 'Erreur lors de la génération.';
@@ -683,7 +703,7 @@ $('btn-generate-pdf').addEventListener('click', async () => {
   }
 });
 
-function generatePDF(entries, debut, fin) {
+function generatePDF(entries, debut, fin, imagesMap) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
@@ -729,7 +749,7 @@ function generatePDF(entries, debut, fin) {
   doc.setLineWidth(0.5);
   doc.line(14, 57, 196, 57);
 
-  // ── Tableau ──
+  // ── Tableau récapitulatif ──
   const rows = entries.map((e, i) => [
     String(i + 1),
     formatDateFR(e.date),
@@ -738,24 +758,15 @@ function generatePDF(entries, debut, fin) {
     e.heure_depart ? e.heure_depart.slice(0, 5) : '—',
     e.heure_arrivee ? e.heure_arrivee.slice(0, 5) : '—',
     Number(e.montant).toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + ' €',
-    e.justificatif_url ? 'Oui' : 'Non',
+    e.justificatif_url ? 'p.' + (entries.indexOf(e) + 1) : '—',
   ]);
 
   doc.autoTable({
     startY: 62,
-    head: [['#', 'Date', 'Départ', 'Arrivée', 'H. dép.', 'H. arr.', 'Montant', 'Justif.']],
+    head: [['#', 'Date', 'Départ', 'Arrivée', 'H. dép.', 'H. ret.', 'Montant', 'Justif.']],
     body: rows,
-    styles: {
-      fontSize: 8.5,
-      cellPadding: 3,
-      textColor: [44, 58, 74],
-    },
-    headStyles: {
-      fillColor: [44, 58, 74],
-      textColor: [255, 255, 255],
-      fontStyle: 'bold',
-      fontSize: 8.5,
-    },
+    styles: { fontSize: 8.5, cellPadding: 3, textColor: [44, 58, 74] },
+    headStyles: { fillColor: [44, 58, 74], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8.5 },
     alternateRowStyles: { fillColor: [245, 244, 241] },
     columnStyles: {
       0: { cellWidth: 8, halign: 'center' },
@@ -776,18 +787,14 @@ function generatePDF(entries, debut, fin) {
   doc.setDrawColor(196, 123, 26);
   doc.setLineWidth(0.4);
   doc.roundedRect(130, finalY, 66, 14, 2, 2, 'FD');
-
   doc.setTextColor(196, 123, 26);
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
   doc.text('TOTAL REMBOURSABLE', 163, finalY + 5.5, { align: 'center' });
   doc.setFontSize(13);
-  doc.text(
-    totalMontant.toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + ' €',
-    163, finalY + 11.5, { align: 'center' }
-  );
+  doc.text(totalMontant.toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + ' €', 163, finalY + 11.5, { align: 'center' });
 
-  // ── Signature ──
+  // ── Signatures ──
   const sigY = finalY + 24;
   doc.setTextColor(44, 58, 74);
   doc.setFontSize(9);
@@ -796,11 +803,90 @@ function generatePDF(entries, debut, fin) {
   doc.setDrawColor(150, 150, 150);
   doc.setLineWidth(0.3);
   doc.line(14, sigY + 14, 80, sigY + 14);
-
   doc.text('Visa du responsable :', 110, sigY);
   doc.line(110, sigY + 14, 196, sigY + 14);
 
-  // ── Pied de page ──
+  // ── Pages justificatifs ──
+  const entriesWithJustif = entries.filter(e => e.justificatif_url && imagesMap[e.id]);
+
+  entriesWithJustif.forEach((entry, idx) => {
+    doc.addPage();
+    const imgNum = idx + 1;
+    const totalImgs = entriesWithJustif.length;
+
+    // En-tête page justificatif
+    doc.setFillColor(44, 58, 74);
+    doc.rect(0, 0, 210, 18, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Justificatif ${imgNum}/${totalImgs}`, 14, 11);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Note de frais · Du ${dateDebut} au ${dateFin}`, 196, 11, { align: 'right' });
+
+    // Infos du déplacement
+    doc.setTextColor(44, 58, 74);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Date :', 14, 26);
+    doc.setFont('helvetica', 'normal');
+    doc.text(formatDateFR(entry.date), 32, 26);
+
+    const route = [entry.lieu_depart, entry.lieu_arrivee].filter(Boolean).join(' → ') || 'Déplacement';
+    doc.setFont('helvetica', 'bold');
+    doc.text('Trajet :', 14, 32);
+    doc.setFont('helvetica', 'normal');
+    doc.text(route, 34, 32, { maxWidth: 150 });
+
+    const horaires = [
+      entry.heure_depart ? `Dép. ${entry.heure_depart.slice(0,5)}` : null,
+      entry.heure_arrivee ? `Ret. ${entry.heure_arrivee.slice(0,5)}` : null,
+    ].filter(Boolean).join('  ·  ');
+    if (horaires) {
+      doc.setFont('helvetica', 'bold');
+      doc.text('Horaires :', 14, 38);
+      doc.setFont('helvetica', 'normal');
+      doc.text(horaires, 40, 38);
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Montant :', 14, 44);
+    doc.setTextColor(196, 123, 26);
+    doc.text(Number(entry.montant).toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + ' €', 40, 44);
+    doc.setTextColor(44, 58, 74);
+
+    // Ligne séparatrice
+    doc.setDrawColor(196, 123, 26);
+    doc.setLineWidth(0.4);
+    doc.line(14, 49, 196, 49);
+
+    // Image du justificatif
+    try {
+      const { dataUrl, format } = imagesMap[entry.id];
+      const imgX = 14;
+      const imgY = 53;
+      const maxW = 182;
+      const maxH = 210;
+
+      // Calculer les dimensions en gardant le ratio
+      const img = new Image();
+      img.src = dataUrl;
+      let w = img.naturalWidth || 800;
+      let h = img.naturalHeight || 600;
+      const ratio = Math.min(maxW / w, maxH / h);
+      w = w * ratio;
+      h = h * ratio;
+
+      doc.addImage(dataUrl, format, imgX, imgY, w, h);
+    } catch (e) {
+      doc.setFontSize(9);
+      doc.setTextColor(180, 60, 40);
+      doc.text('Impossible de charger l\'image.', 14, 60);
+    }
+  });
+
+  // ── Pied de page toutes pages ──
   const pageCount = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -809,7 +895,6 @@ function generatePDF(entries, debut, fin) {
     doc.text(`Frais Pro · Page ${i}/${pageCount}`, 105, 291, { align: 'center' });
   }
 
-  // ── Téléchargement ──
   const filename = `note-frais_${debut}_${fin}.pdf`;
   doc.save(filename);
 }
