@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -74,6 +73,7 @@
       </div>
       <div class="header-right">
         <span id="user-display" class="user-display"></span>
+        <button class="btn-export" id="btn-open-export" title="Exporter en PDF">⬇ Export PDF</button>
         <button class="btn-ghost" id="btn-logout">Déconnexion</button>
       </div>
     </header>
@@ -208,8 +208,45 @@
   </div>
   <div id="day-panel-overlay" class="day-panel-overlay hidden"></div>
 
+  <!-- ─── MODAL : EXPORT PDF ──────────────────────────────────── -->
+  <div id="modal-export" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Exporter en PDF</h3>
+        <button class="modal-close" id="btn-close-export">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="export-intro">Choisissez la période à inclure dans le rapport de remboursement.</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="export-date-debut">Date de début</label>
+            <input type="date" id="export-date-debut" />
+          </div>
+          <div class="form-group">
+            <label for="export-date-fin">Date de fin</label>
+            <input type="date" id="export-date-fin" />
+          </div>
+        </div>
+        <div id="export-preview" class="export-preview hidden">
+          <span id="export-preview-count"></span>
+        </div>
+        <div id="export-error" class="auth-error hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <div></div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="btn-cancel-export">Annuler</button>
+          <button class="btn-primary" id="btn-generate-pdf">⬇ Générer le PDF</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- jsPDF pour la génération PDF côté client -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
