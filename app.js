@@ -531,18 +531,75 @@ function escapeHtml(str) {
 /* ─── EXPORT PDF ─────────────────────────────────────────────── */
 $('btn-open-export').addEventListener('click', () => {
   // Pré-remplir avec le mois courant
-  const firstDay = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
-  const lastDay = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${getDaysInMonth(currentYear, currentMonth)}`;
-  $('export-date-debut').value = firstDay;
-  $('export-date-fin').value = lastDay;
+  applyPeriod('month-current');
   $('export-error').classList.add('hidden');
-  $('export-preview').classList.add('hidden');
-  updateExportPreview();
   $('modal-export').classList.remove('hidden');
 });
 
+// Raccourcis de période
+document.querySelectorAll('.shortcut-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.shortcut-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    applyPeriod(btn.dataset.period);
+  });
+});
+
+function applyPeriod(period) {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth(); // 0-indexed
+  let debut, fin;
+
+  switch (period) {
+    case 'month-current':
+      debut = `${y}-${pad(m + 1)}-01`;
+      fin   = `${y}-${pad(m + 1)}-${pad(getDaysInMonth(y, m))}`;
+      break;
+    case 'month-prev': {
+      const pm = m === 0 ? 11 : m - 1;
+      const py = m === 0 ? y - 1 : y;
+      debut = `${py}-${pad(pm + 1)}-01`;
+      fin   = `${py}-${pad(pm + 1)}-${pad(getDaysInMonth(py, pm))}`;
+      break;
+    }
+    case 'quarter-current': {
+      const q = Math.floor(m / 3);
+      debut = `${y}-${pad(q * 3 + 1)}-01`;
+      const lastM = q * 3 + 2; // 0-indexed last month of quarter
+      fin   = `${y}-${pad(lastM + 1)}-${pad(getDaysInMonth(y, lastM))}`;
+      break;
+    }
+    case 'quarter-prev': {
+      const q = Math.floor(m / 3);
+      const pq = q === 0 ? 3 : q - 1;
+      const py = q === 0 ? y - 1 : y;
+      debut = `${py}-${pad(pq * 3 + 1)}-01`;
+      const lastM = pq * 3 + 2;
+      fin   = `${py}-${pad(lastM + 1)}-${pad(getDaysInMonth(py, lastM))}`;
+      break;
+    }
+    case 'year-current':
+      debut = `${y}-01-01`;
+      fin   = `${y}-12-31`;
+      break;
+    case 'year-prev':
+      debut = `${y - 1}-01-01`;
+      fin   = `${y - 1}-12-31`;
+      break;
+  }
+
+  $('export-date-debut').value = debut;
+  $('export-date-fin').value = fin;
+  $('export-error').classList.add('hidden');
+  updateExportPreview();
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
 function closeExportModal() {
   $('modal-export').classList.add('hidden');
+  document.querySelectorAll('.shortcut-btn').forEach(b => b.classList.remove('active'));
 }
 $('btn-close-export').addEventListener('click', closeExportModal);
 $('btn-cancel-export').addEventListener('click', closeExportModal);
@@ -550,9 +607,15 @@ $('modal-export').addEventListener('click', e => {
   if (e.target === $('modal-export')) closeExportModal();
 });
 
-// Mise à jour du résumé en temps réel quand les dates changent
-$('export-date-debut').addEventListener('change', updateExportPreview);
-$('export-date-fin').addEventListener('change', updateExportPreview);
+// Mise à jour du résumé en temps réel quand les dates changent manuellement
+$('export-date-debut').addEventListener('change', () => {
+  document.querySelectorAll('.shortcut-btn').forEach(b => b.classList.remove('active'));
+  updateExportPreview();
+});
+$('export-date-fin').addEventListener('change', () => {
+  document.querySelectorAll('.shortcut-btn').forEach(b => b.classList.remove('active'));
+  updateExportPreview();
+});
 
 async function updateExportPreview() {
   const debut = $('export-date-debut').value;
@@ -570,10 +633,9 @@ async function updateExportPreview() {
 
   const count = data?.length || 0;
   const total = (data || []).reduce((s, r) => s + Number(r.montant), 0);
-  const preview = $('export-preview');
   $('export-preview-count').textContent =
     `${count} déplacement${count > 1 ? 's' : ''} · ${total.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € remboursables`;
-  preview.classList.remove('hidden');
+  $('export-preview').classList.remove('hidden');
 }
 
 $('btn-generate-pdf').addEventListener('click', async () => {
