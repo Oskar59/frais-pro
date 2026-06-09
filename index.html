@@ -217,6 +217,19 @@
       </div>
       <div class="modal-body">
         <p class="export-intro">Choisissez la période à inclure dans le rapport de remboursement.</p>
+
+        <!-- Raccourcis de période -->
+        <div class="export-shortcuts">
+          <button class="shortcut-btn" data-period="month-current">Ce mois</button>
+          <button class="shortcut-btn" data-period="month-prev">Mois précédent</button>
+          <button class="shortcut-btn" data-period="quarter-current">Ce trimestre</button>
+          <button class="shortcut-btn" data-period="quarter-prev">Trimestre précédent</button>
+          <button class="shortcut-btn" data-period="year-current">Cette année</button>
+          <button class="shortcut-btn" data-period="year-prev">Année précédente</button>
+        </div>
+
+        <div class="export-separator"><span>ou dates personnalisées</span></div>
+
         <div class="form-row">
           <div class="form-group">
             <label for="export-date-debut">Date de début</label>
