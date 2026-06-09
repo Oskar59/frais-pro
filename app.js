@@ -2,7 +2,7 @@
 // Remplacer ces valeurs par vos identifiants Supabase
 // Voir README.md pour les instructions
 const SUPABASE_URL = window.SUPABASE_URL || 'https://wnyxzsgrtodmfvzphryz.supabase.co';
-const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'sb_publishable_WxYcWMVlV9vNz8iRic3cmg_Zvxfu4Bs';
+const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndueXh6c2dydG9kbWZ2enBocnl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA5NzY0NzksImV4cCI6MjA5NjU1MjQ3OX0.y65ZSfNCr4lgcae34jtgO0-1-Fhdxk-RD5EZfYY8u1c';
 
 const FORFAIT_MONTANT = 20; // € par déplacement
 
