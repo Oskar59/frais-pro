@@ -528,10 +528,240 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+/* ─── EXPORT PDF ─────────────────────────────────────────────── */
+$('btn-open-export').addEventListener('click', () => {
+  // Pré-remplir avec le mois courant
+  const firstDay = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
+  const lastDay = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${getDaysInMonth(currentYear, currentMonth)}`;
+  $('export-date-debut').value = firstDay;
+  $('export-date-fin').value = lastDay;
+  $('export-error').classList.add('hidden');
+  $('export-preview').classList.add('hidden');
+  updateExportPreview();
+  $('modal-export').classList.remove('hidden');
+});
+
+function closeExportModal() {
+  $('modal-export').classList.add('hidden');
+}
+$('btn-close-export').addEventListener('click', closeExportModal);
+$('btn-cancel-export').addEventListener('click', closeExportModal);
+$('modal-export').addEventListener('click', e => {
+  if (e.target === $('modal-export')) closeExportModal();
+});
+
+// Mise à jour du résumé en temps réel quand les dates changent
+$('export-date-debut').addEventListener('change', updateExportPreview);
+$('export-date-fin').addEventListener('change', updateExportPreview);
+
+async function updateExportPreview() {
+  const debut = $('export-date-debut').value;
+  const fin = $('export-date-fin').value;
+  if (!debut || !fin || debut > fin) {
+    $('export-preview').classList.add('hidden');
+    return;
+  }
+  const { data } = await db
+    .from('deplacements')
+    .select('id, montant')
+    .eq('user_id', currentUser.id)
+    .gte('date', debut)
+    .lte('date', fin);
+
+  const count = data?.length || 0;
+  const total = (data || []).reduce((s, r) => s + Number(r.montant), 0);
+  const preview = $('export-preview');
+  $('export-preview-count').textContent =
+    `${count} déplacement${count > 1 ? 's' : ''} · ${total.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € remboursables`;
+  preview.classList.remove('hidden');
+}
+
+$('btn-generate-pdf').addEventListener('click', async () => {
+  const debut = $('export-date-debut').value;
+  const fin = $('export-date-fin').value;
+
+  if (!debut || !fin) {
+    $('export-error').textContent = 'Veuillez renseigner les deux dates.';
+    $('export-error').classList.remove('hidden');
+    return;
+  }
+  if (debut > fin) {
+    $('export-error').textContent = 'La date de début doit être avant la date de fin.';
+    $('export-error').classList.remove('hidden');
+    return;
+  }
+
+  const btn = $('btn-generate-pdf');
+  setButtonLoading(btn, true, '⬇ Générer le PDF');
+
+  try {
+    const { data, error } = await db
+      .from('deplacements')
+      .select('*')
+      .eq('user_id', currentUser.id)
+      .gte('date', debut)
+      .lte('date', fin)
+      .order('date', { ascending: true })
+      .order('heure_depart', { ascending: true });
+
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      $('export-error').textContent = 'Aucun déplacement sur cette période.';
+      $('export-error').classList.remove('hidden');
+      return;
+    }
+
+    generatePDF(data, debut, fin);
+    closeExportModal();
+  } catch (err) {
+    $('export-error').textContent = err.message || 'Erreur lors de la génération.';
+    $('export-error').classList.remove('hidden');
+  } finally {
+    setButtonLoading(btn, false, '⬇ Générer le PDF');
+  }
+});
+
+function generatePDF(entries, debut, fin) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  const userName = currentUser.user_metadata?.full_name || currentUser.email;
+  const dateDebut = formatDateFR(debut);
+  const dateFin = formatDateFR(fin);
+  const totalMontant = entries.reduce((s, e) => s + Number(e.montant), 0);
+  const generatedAt = new Date().toLocaleDateString('fr-FR', {
+    day: '2-digit', month: 'long', year: 'numeric'
+  });
+
+  // ── En-tête ──
+  doc.setFillColor(44, 58, 74);
+  doc.rect(0, 0, 210, 28, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Note de frais de déplacements', 14, 12);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Généré le ${generatedAt}`, 14, 20);
+
+  // ── Bloc info ──
+  doc.setTextColor(44, 58, 74);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Collaborateur :', 14, 38);
+  doc.setFont('helvetica', 'normal');
+  doc.text(userName, 52, 38);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Période :', 14, 45);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Du ${dateDebut} au ${dateFin}`, 52, 45);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Nombre de déplacements :', 14, 52);
+  doc.setFont('helvetica', 'normal');
+  doc.text(String(entries.length), 72, 52);
+
+  // ── Ligne séparatrice ──
+  doc.setDrawColor(196, 123, 26);
+  doc.setLineWidth(0.5);
+  doc.line(14, 57, 196, 57);
+
+  // ── Tableau ──
+  const rows = entries.map((e, i) => [
+    String(i + 1),
+    formatDateFR(e.date),
+    e.lieu_depart || '—',
+    e.lieu_arrivee || '—',
+    e.heure_depart ? e.heure_depart.slice(0, 5) : '—',
+    e.heure_arrivee ? e.heure_arrivee.slice(0, 5) : '—',
+    Number(e.montant).toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + ' €',
+    e.justificatif_url ? 'Oui' : 'Non',
+  ]);
+
+  doc.autoTable({
+    startY: 62,
+    head: [['#', 'Date', 'Départ', 'Arrivée', 'H. dép.', 'H. arr.', 'Montant', 'Justif.']],
+    body: rows,
+    styles: {
+      fontSize: 8.5,
+      cellPadding: 3,
+      textColor: [44, 58, 74],
+    },
+    headStyles: {
+      fillColor: [44, 58, 74],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8.5,
+    },
+    alternateRowStyles: { fillColor: [245, 244, 241] },
+    columnStyles: {
+      0: { cellWidth: 8, halign: 'center' },
+      1: { cellWidth: 22 },
+      2: { cellWidth: 38 },
+      3: { cellWidth: 38 },
+      4: { cellWidth: 14, halign: 'center' },
+      5: { cellWidth: 14, halign: 'center' },
+      6: { cellWidth: 20, halign: 'right', fontStyle: 'bold' },
+      7: { cellWidth: 14, halign: 'center' },
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  // ── Bloc total ──
+  const finalY = doc.lastAutoTable.finalY + 6;
+  doc.setFillColor(255, 248, 237);
+  doc.setDrawColor(196, 123, 26);
+  doc.setLineWidth(0.4);
+  doc.roundedRect(130, finalY, 66, 14, 2, 2, 'FD');
+
+  doc.setTextColor(196, 123, 26);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TOTAL REMBOURSABLE', 163, finalY + 5.5, { align: 'center' });
+  doc.setFontSize(13);
+  doc.text(
+    totalMontant.toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + ' €',
+    163, finalY + 11.5, { align: 'center' }
+  );
+
+  // ── Signature ──
+  const sigY = finalY + 24;
+  doc.setTextColor(44, 58, 74);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Signature du collaborateur :', 14, sigY);
+  doc.setDrawColor(150, 150, 150);
+  doc.setLineWidth(0.3);
+  doc.line(14, sigY + 14, 80, sigY + 14);
+
+  doc.text('Visa du responsable :', 110, sigY);
+  doc.line(110, sigY + 14, 196, sigY + 14);
+
+  // ── Pied de page ──
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7.5);
+    doc.setTextColor(150, 150, 150);
+    doc.text(`Frais Pro · Page ${i}/${pageCount}`, 105, 291, { align: 'center' });
+  }
+
+  // ── Téléchargement ──
+  const filename = `note-frais_${debut}_${fin}.pdf`;
+  doc.save(filename);
+}
+
+function formatDateFR(dateStr) {
+  const [y, m, d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+}
+
 /* ─── KEYBOARD SUPPORT ───────────────────────────────────────── */
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    if (!$('modal-entry').classList.contains('hidden')) closeModal();
+    if (!$('modal-export').classList.contains('hidden')) closeExportModal();
+    else if (!$('modal-entry').classList.contains('hidden')) closeModal();
     else if (!$('modal-justif').classList.contains('hidden')) $('modal-justif').classList.add('hidden');
     else if (!$('day-panel').classList.contains('hidden')) closeDayPanel();
   }
