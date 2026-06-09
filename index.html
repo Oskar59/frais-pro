@@ -1,0 +1,215 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Frais Pro — Suivi de déplacements</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ─── AUTH SCREEN ─────────────────────────────────────────── -->
+  <div id="auth-screen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <span class="logo-icon">🚗</span>
+        <h1>Frais Pro</h1>
+        <p>Suivi de déplacements professionnels</p>
+      </div>
+
+      <div class="auth-tabs">
+        <button class="tab-btn active" data-tab="login">Connexion</button>
+        <button class="tab-btn" data-tab="register">Inscription</button>
+      </div>
+
+      <div id="auth-error" class="auth-error hidden"></div>
+      <div id="auth-success" class="auth-success hidden"></div>
+
+      <!-- Login Form -->
+      <div id="tab-login" class="tab-content active">
+        <div class="form-group">
+          <label for="login-email">Adresse e-mail</label>
+          <input type="email" id="login-email" placeholder="vous@exemple.fr" autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label for="login-password">Mot de passe</label>
+          <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <button class="btn-primary btn-full" id="btn-login">Se connecter</button>
+      </div>
+
+      <!-- Register Form -->
+      <div id="tab-register" class="tab-content">
+        <div class="form-group">
+          <label for="register-name">Prénom et nom</label>
+          <input type="text" id="register-name" placeholder="Jean Dupont" autocomplete="name" />
+        </div>
+        <div class="form-group">
+          <label for="register-email">Adresse e-mail</label>
+          <input type="email" id="register-email" placeholder="vous@exemple.fr" autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label for="register-password">Mot de passe <span class="hint">(min. 6 caractères)</span></label>
+          <input type="password" id="register-password" placeholder="••••••••" autocomplete="new-password" />
+        </div>
+        <button class="btn-primary btn-full" id="btn-register">Créer mon compte</button>
+      </div>
+
+      <p class="auth-footer">Vos données sont privées et sécurisées.</p>
+    </div>
+  </div>
+
+  <!-- ─── MAIN APP ─────────────────────────────────────────────── -->
+  <div id="app" class="app hidden">
+
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <span class="logo-icon-sm">🚗</span>
+        <span class="app-title">Frais Pro</span>
+      </div>
+      <div class="header-right">
+        <span id="user-display" class="user-display"></span>
+        <button class="btn-ghost" id="btn-logout">Déconnexion</button>
+      </div>
+    </header>
+
+    <!-- Month Navigation + Summary -->
+    <div class="month-bar">
+      <div class="month-nav">
+        <button class="nav-btn" id="btn-prev-month" aria-label="Mois précédent">‹</button>
+        <h2 id="month-label" class="month-label"></h2>
+        <button class="nav-btn" id="btn-next-month" aria-label="Mois suivant">›</button>
+      </div>
+      <div class="month-summary">
+        <div class="summary-item">
+          <span class="summary-value" id="summary-count">0</span>
+          <span class="summary-label">déplacements</span>
+        </div>
+        <div class="summary-divider"></div>
+        <div class="summary-item">
+          <span class="summary-value amber" id="summary-total">0 €</span>
+          <span class="summary-label">remboursable</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Calendar -->
+    <main class="calendar-wrapper">
+      <div class="calendar-header">
+        <span>Lun</span><span>Mar</span><span>Mer</span><span>Jeu</span>
+        <span>Ven</span><span>Sam</span><span>Dim</span>
+      </div>
+      <div class="calendar-grid" id="calendar-grid"></div>
+    </main>
+
+    <!-- FAB (mobile add button) -->
+    <button class="fab" id="btn-fab" aria-label="Ajouter un déplacement">+</button>
+
+  </div>
+
+  <!-- ─── MODAL : ADD/EDIT ENTRY ───────────────────────────────── -->
+  <div id="modal-entry" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-title">Nouveau déplacement</h3>
+        <button class="modal-close" id="btn-close-modal" aria-label="Fermer">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <input type="hidden" id="entry-id" />
+        <input type="hidden" id="entry-date" />
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="entry-depart">Lieu de départ</label>
+            <input type="text" id="entry-depart" placeholder="Ex : Bureau Paris 9e" />
+          </div>
+          <div class="form-group">
+            <label for="entry-arrivee">Lieu d'arrivée</label>
+            <input type="text" id="entry-arrivee" placeholder="Ex : Client Levallois" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="entry-heure-dep">Départ</label>
+            <input type="time" id="entry-heure-dep" />
+          </div>
+          <div class="form-group">
+            <label for="entry-heure-arr">Arrivée</label>
+            <input type="time" id="entry-heure-arr" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Remboursement</label>
+          <div class="amount-display">
+            <span class="amount-value">20,00 €</span>
+            <span class="amount-hint">Montant forfaitaire</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="entry-justif">Justificatif <span class="hint">(optionnel)</span></label>
+          <div class="upload-zone" id="upload-zone">
+            <input type="file" id="entry-justif" accept="image/jpeg,image/png,image/webp" class="file-input" />
+            <div class="upload-placeholder" id="upload-placeholder">
+              <span class="upload-icon">📎</span>
+              <span>Cliquer ou déposer une photo<br><small>JPEG, PNG — max 5 Mo</small></span>
+            </div>
+            <div class="upload-preview hidden" id="upload-preview">
+              <img id="preview-img" src="" alt="Aperçu justificatif" />
+              <button type="button" class="remove-img" id="btn-remove-img">✕</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="modal-error" class="auth-error hidden"></div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-danger hidden" id="btn-delete-entry">Supprimer</button>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="btn-cancel-modal">Annuler</button>
+          <button class="btn-primary" id="btn-save-entry">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── MODAL : VIEW JUSTIFICATIF ───────────────────────────── -->
+  <div id="modal-justif" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card modal-card-img">
+      <div class="modal-header">
+        <h3>Justificatif</h3>
+        <button class="modal-close" id="btn-close-justif">✕</button>
+      </div>
+      <div class="modal-body modal-body-img">
+        <img id="justif-full-img" src="" alt="Justificatif" />
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── DAY DETAIL PANEL (slide-up on mobile) ───────────────── -->
+  <div id="day-panel" class="day-panel hidden">
+    <div class="day-panel-header">
+      <h3 id="day-panel-title">Déplacements</h3>
+      <button class="modal-close" id="btn-close-day">✕</button>
+    </div>
+    <div id="day-panel-list" class="day-panel-list"></div>
+    <div class="day-panel-footer">
+      <button class="btn-primary btn-full" id="btn-add-from-day">+ Ajouter un déplacement</button>
+    </div>
+  </div>
+  <div id="day-panel-overlay" class="day-panel-overlay hidden"></div>
+
+  <!-- Supabase CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="app.js"></script>
+</body>
+</html>

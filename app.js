@@ -1,0 +1,538 @@
+/* ─── CONFIG ─────────────────────────────────────────────────── */
+// Remplacer ces valeurs par vos identifiants Supabase
+// Voir README.md pour les instructions
+const SUPABASE_URL = window.SUPABASE_URL || 'https://wnyxzsgrtodmfvzphryz.supabase.co';
+const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'sb_publishable_WxYcWMVlV9vNz8iRic3cmg_Zvxfu4Bs';
+
+const FORFAIT_MONTANT = 20; // € par déplacement
+
+/* ─── INIT SUPABASE ──────────────────────────────────────────── */
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ─── STATE ──────────────────────────────────────────────────── */
+let currentUser = null;
+let currentMonth = new Date().getMonth();
+let currentYear = new Date().getFullYear();
+let entriesCache = {}; // { "YYYY-MM-DD": [entry, ...] }
+let currentDayDate = null;
+let editingEntryId = null;
+let pendingImageFile = null;
+let pendingImageDataUrl = null;
+let existingImageUrl = null;
+
+/* ─── DOM REFS ───────────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+const authScreen = $('auth-screen');
+const appEl = $('app');
+
+/* ─── AUTH ───────────────────────────────────────────────────── */
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    $('tab-' + btn.dataset.tab).classList.add('active');
+    hideAuthMessages();
+  });
+});
+
+function showAuthError(msg) {
+  const el = $('auth-error');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  $('auth-success').classList.add('hidden');
+}
+function showAuthSuccess(msg) {
+  const el = $('auth-success');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  $('auth-error').classList.add('hidden');
+}
+function hideAuthMessages() {
+  $('auth-error').classList.add('hidden');
+  $('auth-success').classList.add('hidden');
+}
+
+function setButtonLoading(btn, loading, originalText) {
+  if (loading) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="loading-spinner"></span>${originalText}`;
+  } else {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+$('btn-login').addEventListener('click', async () => {
+  const email = $('login-email').value.trim();
+  const password = $('login-password').value;
+  if (!email || !password) { showAuthError('Veuillez remplir tous les champs.'); return; }
+  const btn = $('btn-login');
+  setButtonLoading(btn, true, 'Se connecter');
+  const { error } = await db.auth.signInWithPassword({ email, password });
+  setButtonLoading(btn, false, 'Se connecter');
+  if (error) showAuthError(error.message === 'Invalid login credentials'
+    ? 'Email ou mot de passe incorrect.' : error.message);
+});
+
+$('btn-register').addEventListener('click', async () => {
+  const name = $('register-name').value.trim();
+  const email = $('register-email').value.trim();
+  const password = $('register-password').value;
+  if (!name || !email || !password) { showAuthError('Veuillez remplir tous les champs.'); return; }
+  if (password.length < 6) { showAuthError('Le mot de passe doit contenir au moins 6 caractères.'); return; }
+  const btn = $('btn-register');
+  setButtonLoading(btn, true, "Créer mon compte");
+  const { error } = await db.auth.signUp({
+    email, password,
+    options: { data: { full_name: name } }
+  });
+  setButtonLoading(btn, false, "Créer mon compte");
+  if (error) { showAuthError(error.message); return; }
+  showAuthSuccess('Compte créé ! Vérifiez vos emails pour confirmer, puis connectez-vous.');
+});
+
+$('btn-logout').addEventListener('click', async () => {
+  await db.auth.signOut();
+});
+
+// Auth state listener
+db.auth.onAuthStateChange((_event, session) => {
+  currentUser = session?.user ?? null;
+  if (currentUser) {
+    authScreen.classList.add('hidden');
+    appEl.classList.remove('hidden');
+    const name = currentUser.user_metadata?.full_name || currentUser.email;
+    $('user-display').textContent = name;
+    loadMonth();
+  } else {
+    authScreen.classList.remove('hidden');
+    appEl.classList.add('hidden');
+    entriesCache = {};
+  }
+});
+
+/* ─── CALENDAR RENDERING ─────────────────────────────────────── */
+const MONTHS_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
+  'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+
+function updateMonthLabel() {
+  $('month-label').textContent = `${MONTHS_FR[currentMonth]} ${currentYear}`;
+}
+
+function getDaysInMonth(year, month) {
+  return new Date(year, month + 1, 0).getDate();
+}
+function getFirstDayOfMonth(year, month) {
+  const day = new Date(year, month, 1).getDay();
+  return day === 0 ? 6 : day - 1; // Monday = 0
+}
+
+async function loadMonth() {
+  updateMonthLabel();
+  const startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
+  const endDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${getDaysInMonth(currentYear, currentMonth)}`;
+
+  const { data, error } = await db
+    .from('deplacements')
+    .select('*')
+    .eq('user_id', currentUser.id)
+    .gte('date', startDate)
+    .lte('date', endDate)
+    .order('heure_depart', { ascending: true });
+
+  if (error) { console.error(error); return; }
+
+  entriesCache = {};
+  (data || []).forEach(entry => {
+    if (!entriesCache[entry.date]) entriesCache[entry.date] = [];
+    entriesCache[entry.date].push(entry);
+  });
+
+  renderCalendar();
+  updateSummary();
+}
+
+function renderCalendar() {
+  const grid = $('calendar-grid');
+  grid.innerHTML = '';
+
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const firstDay = getFirstDayOfMonth(currentYear, currentMonth);
+  const daysInMonth = getDaysInMonth(currentYear, currentMonth);
+  const daysInPrevMonth = getDaysInMonth(currentYear, currentMonth - 1);
+
+  // Previous month padding
+  for (let i = firstDay - 1; i >= 0; i--) {
+    const day = daysInPrevMonth - i;
+    const cell = createCell(day, true, null);
+    grid.appendChild(cell);
+  }
+
+  // Current month
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const isToday = dateStr === todayStr;
+    const entries = entriesCache[dateStr] || [];
+    const cell = createCell(d, false, dateStr, isToday, entries);
+    grid.appendChild(cell);
+  }
+
+  // Next month padding
+  const totalCells = firstDay + daysInMonth;
+  const remaining = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+  for (let i = 1; i <= remaining; i++) {
+    const cell = createCell(i, true, null);
+    grid.appendChild(cell);
+  }
+}
+
+function createCell(day, otherMonth, dateStr, isToday = false, entries = []) {
+  const cell = document.createElement('div');
+  cell.className = 'cal-cell' + (otherMonth ? ' other-month' : '') + (isToday ? ' today' : '') + (entries.length > 0 ? ' has-entries' : '');
+
+  const num = document.createElement('div');
+  num.className = 'cal-day-number';
+  num.textContent = day;
+  cell.appendChild(num);
+
+  if (!otherMonth && entries.length > 0) {
+    const list = document.createElement('div');
+    list.className = 'cal-entries';
+    const maxShow = 2;
+    entries.slice(0, maxShow).forEach(e => {
+      const pill = document.createElement('div');
+      pill.className = 'cal-entry-pill';
+      const route = e.lieu_depart && e.lieu_arrivee
+        ? `<span class="pill-route">${truncate(e.lieu_depart, 8)} → ${truncate(e.lieu_arrivee, 8)}</span>`
+        : '<span class="pill-route">Déplacement</span>';
+      pill.innerHTML = `${FORFAIT_MONTANT} € ${route}`;
+      list.appendChild(pill);
+    });
+    if (entries.length > maxShow) {
+      const more = document.createElement('div');
+      more.className = 'cal-more';
+      more.textContent = `+${entries.length - maxShow} autre${entries.length - maxShow > 1 ? 's' : ''}`;
+      list.appendChild(more);
+    }
+    cell.appendChild(list);
+  }
+
+  if (!otherMonth && dateStr) {
+    cell.addEventListener('click', () => openDayPanel(dateStr));
+  }
+  return cell;
+}
+
+function truncate(str, n) {
+  return str.length > n ? str.slice(0, n) + '…' : str;
+}
+
+function updateSummary() {
+  let count = 0;
+  Object.values(entriesCache).forEach(entries => { count += entries.length; });
+  $('summary-count').textContent = count;
+  $('summary-total').textContent = (count * FORFAIT_MONTANT).toLocaleString('fr-FR') + ' €';
+}
+
+/* ─── MONTH NAVIGATION ───────────────────────────────────────── */
+$('btn-prev-month').addEventListener('click', () => {
+  currentMonth--;
+  if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+  loadMonth();
+});
+$('btn-next-month').addEventListener('click', () => {
+  currentMonth++;
+  if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+  loadMonth();
+});
+
+/* ─── DAY PANEL ──────────────────────────────────────────────── */
+function openDayPanel(dateStr) {
+  currentDayDate = dateStr;
+  const entries = entriesCache[dateStr] || [];
+  const d = new Date(dateStr + 'T00:00:00');
+  const label = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+  $('day-panel-title').textContent = label.charAt(0).toUpperCase() + label.slice(1);
+
+  renderDayList(entries);
+
+  $('day-panel').classList.remove('hidden');
+  $('day-panel-overlay').classList.remove('hidden');
+}
+
+function renderDayList(entries) {
+  const list = $('day-panel-list');
+  list.innerHTML = '';
+  if (entries.length === 0) {
+    list.innerHTML = '<div class="empty-day">Aucun déplacement ce jour.<br>Appuyez sur le bouton ci-dessous pour en ajouter un.</div>';
+    return;
+  }
+  entries.forEach(entry => {
+    const card = document.createElement('div');
+    card.className = 'entry-card';
+
+    const route = [entry.lieu_depart, entry.lieu_arrivee].filter(Boolean).join(' → ') || 'Déplacement';
+    const time = [entry.heure_depart, entry.heure_arrivee].filter(Boolean).join(' – ');
+
+    card.innerHTML = `
+      <div class="entry-card-info">
+        <div class="entry-route">${escapeHtml(route)}</div>
+        ${time ? `<div class="entry-time">${escapeHtml(time)}</div>` : ''}
+      </div>
+      <div class="entry-card-actions">
+        ${entry.justificatif_url ? `<button class="entry-justif-btn" data-url="${escapeHtml(entry.justificatif_url)}" title="Voir justificatif">📎</button>` : ''}
+        <span class="entry-amount-badge">${FORFAIT_MONTANT} €</span>
+        <button class="entry-edit-btn" data-id="${entry.id}">Modifier</button>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+
+  list.querySelectorAll('.entry-edit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      closeDayPanel();
+      const entry = (entriesCache[currentDayDate] || []).find(e => e.id === btn.dataset.id);
+      if (entry) openEditModal(entry);
+    });
+  });
+  list.querySelectorAll('.entry-justif-btn').forEach(btn => {
+    btn.addEventListener('click', () => openJustifModal(btn.dataset.url));
+  });
+}
+
+function closeDayPanel() {
+  $('day-panel').classList.add('hidden');
+  $('day-panel-overlay').classList.add('hidden');
+}
+$('btn-close-day').addEventListener('click', closeDayPanel);
+$('day-panel-overlay').addEventListener('click', closeDayPanel);
+$('btn-add-from-day').addEventListener('click', () => {
+  closeDayPanel();
+  openNewModal(currentDayDate);
+});
+
+/* ─── FAB ────────────────────────────────────────────────────── */
+$('btn-fab').addEventListener('click', () => {
+  const today = new Date();
+  const dateStr = today.toISOString().split('T')[0];
+  openDayPanel(dateStr);
+});
+
+/* ─── ENTRY MODAL ────────────────────────────────────────────── */
+function resetModal() {
+  $('entry-id').value = '';
+  $('entry-date').value = '';
+  $('entry-depart').value = '';
+  $('entry-arrivee').value = '';
+  $('entry-heure-dep').value = '';
+  $('entry-heure-arr').value = '';
+  $('modal-error').classList.add('hidden');
+  $('btn-delete-entry').classList.add('hidden');
+  pendingImageFile = null;
+  pendingImageDataUrl = null;
+  existingImageUrl = null;
+  $('upload-placeholder').classList.remove('hidden');
+  $('upload-preview').classList.add('hidden');
+  $('preview-img').src = '';
+  $('entry-justif').value = '';
+}
+
+function openNewModal(dateStr) {
+  resetModal();
+  editingEntryId = null;
+  $('modal-title').textContent = 'Nouveau déplacement';
+  $('entry-date').value = dateStr;
+  $('modal-entry').classList.remove('hidden');
+}
+
+function openEditModal(entry) {
+  resetModal();
+  editingEntryId = entry.id;
+  $('modal-title').textContent = 'Modifier le déplacement';
+  $('entry-id').value = entry.id;
+  $('entry-date').value = entry.date;
+  $('entry-depart').value = entry.lieu_depart || '';
+  $('entry-arrivee').value = entry.lieu_arrivee || '';
+  $('entry-heure-dep').value = entry.heure_depart || '';
+  $('entry-heure-arr').value = entry.heure_arrivee || '';
+  $('btn-delete-entry').classList.remove('hidden');
+
+  if (entry.justificatif_url) {
+    existingImageUrl = entry.justificatif_url;
+    $('upload-placeholder').classList.add('hidden');
+    $('upload-preview').classList.remove('hidden');
+    $('preview-img').src = entry.justificatif_url;
+  }
+  $('modal-entry').classList.remove('hidden');
+}
+
+function closeModal() {
+  $('modal-entry').classList.add('hidden');
+  resetModal();
+}
+$('btn-close-modal').addEventListener('click', closeModal);
+$('btn-cancel-modal').addEventListener('click', closeModal);
+$('modal-entry').addEventListener('click', e => {
+  if (e.target === $('modal-entry')) closeModal();
+});
+
+/* ─── IMAGE UPLOAD ───────────────────────────────────────────── */
+$('entry-justif').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    showModalError('Le fichier dépasse 5 Mo.'); return;
+  }
+  pendingImageFile = file;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    pendingImageDataUrl = ev.target.result;
+    $('preview-img').src = pendingImageDataUrl;
+    $('upload-placeholder').classList.add('hidden');
+    $('upload-preview').classList.remove('hidden');
+  };
+  reader.readAsDataURL(file);
+});
+
+$('btn-remove-img').addEventListener('click', e => {
+  e.stopPropagation();
+  pendingImageFile = null;
+  pendingImageDataUrl = null;
+  existingImageUrl = null;
+  $('entry-justif').value = '';
+  $('preview-img').src = '';
+  $('upload-placeholder').classList.remove('hidden');
+  $('upload-preview').classList.add('hidden');
+});
+
+// Drag-and-drop
+const uploadZone = $('upload-zone');
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    $('entry-justif').files = dt.files;
+    $('entry-justif').dispatchEvent(new Event('change'));
+  }
+});
+
+/* ─── SAVE ENTRY ─────────────────────────────────────────────── */
+function showModalError(msg) {
+  const el = $('modal-error');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+$('btn-save-entry').addEventListener('click', async () => {
+  const depart = $('entry-depart').value.trim();
+  const arrivee = $('entry-arrivee').value.trim();
+  const dateStr = $('entry-date').value;
+
+  if (!depart || !arrivee) {
+    showModalError('Lieu de départ et d\'arrivée requis.'); return;
+  }
+  if (!dateStr) {
+    showModalError('Date manquante.'); return;
+  }
+
+  const btn = $('btn-save-entry');
+  setButtonLoading(btn, true, 'Enregistrer');
+
+  try {
+    let justificatif_url = existingImageUrl || null;
+
+    // Upload image if new one selected
+    if (pendingImageFile) {
+      const ext = pendingImageFile.name.split('.').pop().toLowerCase();
+      const fileName = `${currentUser.id}/${Date.now()}.${ext}`;
+      const { error: upErr } = await db.storage
+        .from('justificatifs')
+        .upload(fileName, pendingImageFile, { upsert: false });
+
+      if (upErr) throw upErr;
+
+      const { data: urlData } = db.storage
+        .from('justificatifs')
+        .getPublicUrl(fileName);
+      justificatif_url = urlData.publicUrl;
+    }
+
+    const payload = {
+      user_id: currentUser.id,
+      date: dateStr,
+      lieu_depart: depart,
+      lieu_arrivee: arrivee,
+      heure_depart: $('entry-heure-dep').value || null,
+      heure_arrivee: $('entry-heure-arr').value || null,
+      montant: FORFAIT_MONTANT,
+      justificatif_url
+    };
+
+    let error;
+    if (editingEntryId) {
+      ({ error } = await db.from('deplacements').update(payload).eq('id', editingEntryId).eq('user_id', currentUser.id));
+    } else {
+      ({ error } = await db.from('deplacements').insert(payload));
+    }
+    if (error) throw error;
+
+    closeModal();
+    await loadMonth();
+  } catch (err) {
+    showModalError(err.message || 'Une erreur est survenue.');
+  } finally {
+    setButtonLoading(btn, false, 'Enregistrer');
+  }
+});
+
+/* ─── DELETE ENTRY ───────────────────────────────────────────── */
+$('btn-delete-entry').addEventListener('click', async () => {
+  if (!editingEntryId) return;
+  if (!confirm('Supprimer ce déplacement ?')) return;
+  const { error } = await db.from('deplacements').delete().eq('id', editingEntryId).eq('user_id', currentUser.id);
+  if (error) { showModalError(error.message); return; }
+  closeModal();
+  await loadMonth();
+});
+
+/* ─── JUSTIF MODAL ───────────────────────────────────────────── */
+function openJustifModal(url) {
+  $('justif-full-img').src = url;
+  $('modal-justif').classList.remove('hidden');
+}
+$('btn-close-justif').addEventListener('click', () => {
+  $('modal-justif').classList.add('hidden');
+  $('justif-full-img').src = '';
+});
+$('modal-justif').addEventListener('click', e => {
+  if (e.target === $('modal-justif')) {
+    $('modal-justif').classList.add('hidden');
+  }
+});
+
+/* ─── UTILS ──────────────────────────────────────────────────── */
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/* ─── KEYBOARD SUPPORT ───────────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (!$('modal-entry').classList.contains('hidden')) closeModal();
+    else if (!$('modal-justif').classList.contains('hidden')) $('modal-justif').classList.add('hidden');
+    else if (!$('day-panel').classList.contains('hidden')) closeDayPanel();
+  }
+});
